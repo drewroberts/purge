@@ -11,5 +11,5 @@ class VisitTweetWidget extends Widget
 
     public Purge $record;
 
-    protected int | string | array $columnSpan = 'full';
+    protected int|string|array $columnSpan = 'full';
 }
