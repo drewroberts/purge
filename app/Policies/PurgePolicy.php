@@ -2,29 +2,40 @@
 
 namespace App\Policies;
 
+use App\Enums\AllowedEmailDomain;
 use App\Models\Purge;
 use App\Models\User;
 
+/**
+ * Single-tenant internal hardening policy.
+ *
+ * All decisions go through the purge's owning account. A purge whose
+ * account_id is null is treated as orphaned and invisible to everyone
+ * (see README — this app is not yet multi-tenant-safe).
+ */
 class PurgePolicy
 {
     /**
-     * Determine whether the user can view any models.
+     * List access: whitelisted users who have at least one connected account.
      */
     public function viewAny(User $user): bool
     {
-        return true;
+        return AllowedEmailDomain::isAllowed($user->email)
+            && $user->accounts()->exists();
     }
 
     /**
-     * Determine whether the user can view the model.
+     * A user can view a purge only if it is bound to one of their accounts.
+     * Unassigned purges are blocked.
      */
     public function view(User $user, Purge $purge): bool
     {
-        return true;
+        return $purge->account !== null
+            && $purge->account->user_id === $user->id;
     }
 
     /**
-     * Determine whether the user can create models.
+     * Purges are created via server-side CSV import, never via Filament form.
      */
     public function create(User $user): bool
     {
@@ -32,32 +43,24 @@ class PurgePolicy
     }
 
     /**
-     * Determine whether the user can update the model.
+     * Updates happen through narrow, explicit record actions (toggle save,
+     * manual purge) that carry their own auth checks. No generic edits.
      */
     public function update(User $user, Purge $purge): bool
     {
         return false;
     }
 
-    /**
-     * Determine whether the user can delete the model.
-     */
     public function delete(User $user, Purge $purge): bool
     {
         return false;
     }
 
-    /**
-     * Determine whether the user can restore the model.
-     */
     public function restore(User $user, Purge $purge): bool
     {
         return false;
     }
 
-    /**
-     * Determine whether the user can permanently delete the model.
-     */
     public function forceDelete(User $user, Purge $purge): bool
     {
         return false;

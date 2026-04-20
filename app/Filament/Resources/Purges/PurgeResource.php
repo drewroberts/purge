@@ -11,6 +11,8 @@ use BackedEnum;
 use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Auth;
 
 class PurgeResource extends Resource
 {
@@ -47,5 +49,21 @@ class PurgeResource extends Resource
             'index' => ListPurges::route('/'),
             'view' => ViewPurge::route('/{record}'),
         ];
+    }
+
+    /**
+     * Scope every Filament query to purges owned by the current user's
+     * accounts. Unassigned purges are hidden from the UI entirely.
+     */
+    public static function getEloquentQuery(): Builder
+    {
+        $query = parent::getEloquentQuery();
+        $userId = Auth::id();
+
+        if ($userId === null) {
+            return $query->whereRaw('0 = 1');
+        }
+
+        return $query->whereHas('account', fn (Builder $q) => $q->where('user_id', $userId));
     }
 }

@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Enums\SocialService;
 use App\Models\Account;
 use App\Models\Purge;
+use App\Models\User;
 use Illuminate\Support\Facades\Log;
 
 class PurgeService
@@ -14,56 +15,63 @@ class PurgeService
     ) {}
 
     /**
-     * Get the default Twitter account for purging.
-     * Returns the first connected Twitter account (ID = 1).
+     * Return the given user's first active Twitter account, or null.
+     *
+     * There is no global "account id = 1" default. A user context is
+     * required so we can never accidentally act on another tenant's account.
      */
-    public function getDefaultAccount(): ?Account
+    public function getDefaultAccount(User $user): ?Account
     {
-        return Account::where('service', SocialService::TWITTER)
-            ->where('id', 1)
+        return $user->accounts()
+            ->where('service', SocialService::TWITTER)
             ->where('is_active', true)
+            ->orderBy('id')
             ->first();
     }
 
     /**
-     * Process a single purge request.
+     * Process a single purge.
+     *
+     * Account resolution order:
+     *   1. $purge->account — used as-is. If $user is provided, the account
+     *      must belong to that user or the purge is skipped.
+     *   2. $user's default Twitter account — ONLY when $user is explicitly
+     *      provided by the caller (UI action or CLI with derived user).
+     *   3. Otherwise: skip and log. A global default is never used.
      */
-    public function processPurge(Purge $purge): bool
+    public function processPurge(Purge $purge, ?User $user = null): bool
     {
-        // Don't process if already requested or purged
         if ($purge->requested_at || $purge->purged_at) {
             Log::warning('Purge already processed', ['purge_id' => $purge->id]);
 
             return false;
         }
 
-        // Don't process if marked as saved
         if ($purge->save) {
             Log::info('Purge skipped - marked as saved', ['purge_id' => $purge->id]);
 
             return false;
         }
 
-        // Get the account to use
-        $account = $purge->account ?? $this->getDefaultAccount();
+        $account = $this->resolveAccount($purge, $user);
 
         if (! $account) {
-            Log::error('No Twitter account available for purge', ['purge_id' => $purge->id]);
+            Log::warning('Purge skipped - no account resolvable', [
+                'purge_id' => $purge->id,
+                'purge_has_account' => $purge->account_id !== null,
+                'user_provided' => $user !== null,
+            ]);
 
             return false;
         }
 
-        /** @var Account $account */
-
-        // Mark as requested before attempting
+        // Mark as requested before attempting (at-most-once semantics).
         $purge->update(['requested_at' => now()]);
 
         try {
-            // Attempt to delete the tweet
             $deleted = $this->twitterService->deleteTweet($purge, $account);
 
             if ($deleted) {
-                // Mark as purged
                 $purge->update(['purged_at' => now()]);
 
                 Log::info('Tweet purged successfully', [
@@ -92,30 +100,71 @@ class PurgeService
         }
     }
 
+    protected function resolveAccount(Purge $purge, ?User $user): ?Account
+    {
+        if ($purge->account) {
+            if ($user !== null && $purge->account->user_id !== $user->id) {
+                Log::warning('Purge account does not belong to provided user', [
+                    'purge_id' => $purge->id,
+                    'account_user_id' => $purge->account->user_id,
+                    'provided_user_id' => $user->id,
+                ]);
+
+                return null;
+            }
+
+            return $purge->account;
+        }
+
+        // Purge is unassigned. Only use the user's default when a user was
+        // explicitly supplied — never a silent global fallback.
+        if ($user === null) {
+            return null;
+        }
+
+        return $this->getDefaultAccount($user);
+    }
+
     /**
-     * Get the next pending purge to process.
-     * Returns the oldest tweet (by posted_at) that needs to be deleted.
+     * Next pending purge that has an assigned account (so a user is
+     * derivable). Unassigned purges are intentionally invisible to the
+     * scheduler.
      */
     public function getNextPendingPurge(): ?Purge
     {
         return Purge::pending()
+            ->whereNotNull('account_id')
             ->orderBy('posted_at', 'asc')
             ->first();
     }
 
     /**
-     * Get statistics about purge progress.
+     * Purge statistics.
+     *
+     * Pass $user (or $account) for tenant-scoped stats. UI code MUST pass
+     * one of these — global counts must never be shown on user-facing
+     * screens. Calling with neither returns global counts and is reserved
+     * for internal/CLI use.
      *
      * @return array{total: int, pending: int, requested: int, purged: int, saved: int}
      */
-    public function getStats(): array
+    public function getStats(?User $user = null, ?Account $account = null): array
     {
+        $base = Purge::query();
+
+        if ($account !== null) {
+            $base->where('account_id', $account->id);
+        } elseif ($user !== null) {
+            $userAccountIds = $user->accounts()->pluck('id');
+            $base->whereIn('account_id', $userAccountIds);
+        }
+
         return [
-            'total' => Purge::count(),
-            'pending' => Purge::pending()->count(),
-            'requested' => Purge::requested()->count(),
-            'purged' => Purge::purged()->count(),
-            'saved' => Purge::where('save', true)->count(),
+            'total' => (clone $base)->count(),
+            'pending' => (clone $base)->where('save', false)->whereNull('requested_at')->count(),
+            'requested' => (clone $base)->whereNotNull('requested_at')->whereNull('purged_at')->count(),
+            'purged' => (clone $base)->whereNotNull('purged_at')->count(),
+            'saved' => (clone $base)->where('save', true)->count(),
         ];
     }
 }

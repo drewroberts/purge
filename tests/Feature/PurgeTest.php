@@ -341,26 +341,27 @@ describe('Account Integration', function () {
             ->and($purge2->account->username)->toBe('other');
     });
 
-    it('falls back to default account when purge has no account', function () {
-        $defaultAccount = Account::factory()->create([
+    it('scheduler does NOT process an unassigned purge, even when a default account exists', function () {
+        // A connected account that, under the old global-default behavior,
+        // would have been picked as the fallback.
+        Account::factory()->create([
             'service' => SocialService::TWITTER,
             'username' => 'drewroberts',
             'is_active' => true,
         ]);
 
-        $purge = Purge::factory()->create([
-            'account_id' => null,
+        $orphan = Purge::factory()->orphan()->create([
             'save' => false,
             'requested_at' => null,
         ]);
 
         $this->mock(TwitterAccountService::class)
-            ->shouldReceive('deleteTweet')
-            ->once()
-            ->andReturn(true);
+            ->shouldNotReceive('deleteTweet');
 
         Artisan::call('purge:process');
 
-        expect($purge->fresh()->purged_at)->not->toBeNull();
+        expect($orphan->fresh())
+            ->requested_at->toBeNull()
+            ->purged_at->toBeNull();
     });
 });

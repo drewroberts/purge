@@ -39,6 +39,21 @@ A Laravel application for managing multiple social media accounts and automated 
 - **PHPStan Analysis**: Level 5 static analysis with zero errors
 - **CI/CD Ready**: GitHub Actions workflow for automated testing and linting
 
+## Deployment Model & Tenancy
+
+This app is currently hardened for **single-tenant / internal allowlisted use**. It is not safe for external multi-user deployment until purges receive direct `user_id` ownership and all queries are tenant-scoped.
+
+Current isolation guarantees:
+
+- `PurgePolicy` only permits viewing a purge when it is bound to an account owned by the current user.
+- `PurgeService::processPurge()` never uses a global default account — an account is resolved from the purge itself or from an explicitly supplied user, otherwise the purge is skipped.
+- `PurgeService::getDefaultAccount(User $user)` is user-scoped; the previous `id = 1` hardcode is gone.
+- The CLI scheduler (`purge:process`) derives the acting user from `$purge->account->user` and skips unassigned purges.
+- CSV import auto-binds every imported purge to the importing user's active Twitter account.
+- Filament Purge queries (`PurgeResource::getEloquentQuery`, `PurgeBatchWidget`, stats action) are scoped to the current user's accounts.
+
+Before opening this app to external users, purges must gain a direct `user_id` column, a migration backfill, and every remaining bulk/CLI path must be refactored to respect that ownership.
+
 ## Tech Stack
 
 - **Laravel 12**: Latest framework features with modern PHP 8.2+
