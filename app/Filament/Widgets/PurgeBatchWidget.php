@@ -5,6 +5,8 @@ namespace App\Filament\Widgets;
 use App\Models\Purge;
 use Filament\Notifications\Notification;
 use Filament\Widgets\Widget;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Auth;
 
 class PurgeBatchWidget extends Widget
 {
@@ -20,13 +22,29 @@ class PurgeBatchWidget extends Widget
 
     public bool $useRegex = false;
 
+    /**
+     * Build a base Purge query scoped to the current user's accounts.
+     * All batch operations are tenant-scoped; no global queries leak here.
+     *
+     * @return Builder<Purge>
+     */
+    protected function scopedQuery(): Builder
+    {
+        $userId = Auth::id();
+
+        return Purge::query()->whereHas(
+            'account',
+            fn (Builder $q) => $q->where('user_id', $userId)
+        );
+    }
+
     public function getSearchCount(): int
     {
         if (empty($this->searchText)) {
             return 0;
         }
 
-        $query = Purge::where('save', $this->operation === 'save' ? false : true);
+        $query = $this->scopedQuery()->where('save', $this->operation === 'save' ? false : true);
 
         if ($this->useRegex) {
             $purges = $query->get()->filter(function ($purge) {
@@ -70,7 +88,7 @@ class PurgeBatchWidget extends Widget
         $targetSaveState = $operation === 'save' ? false : true;
         $newSaveState = $operation === 'save' ? true : false;
 
-        $query = Purge::where('save', $targetSaveState);
+        $query = $this->scopedQuery()->where('save', $targetSaveState);
 
         if ($this->useRegex) {
             $purges = $query->get()->filter(function ($purge) {

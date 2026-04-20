@@ -9,6 +9,7 @@ use Filament\Notifications\Notification;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Auth;
 
 class PurgesTable
 {
@@ -108,7 +109,11 @@ class PurgesTable
                     ->falseLabel('Not saved'),
 
                 Tables\Filters\SelectFilter::make('account_id')
-                    ->relationship('account', 'username')
+                    ->relationship(
+                        'account',
+                        'username',
+                        fn (Builder $query) => $query->where('user_id', Auth::id())
+                    )
                     ->label('Account'),
             ])
             ->recordActions([
@@ -137,7 +142,10 @@ class PurgesTable
                     ->icon('heroicon-o-chart-bar')
                     ->color('info')
                     ->action(function () {
-                        $stats = app(PurgeService::class)->getStats();
+                        /** @var \App\Models\User $user */
+                        $user = Auth::user();
+                        // UI callers must scope stats; never display global counts.
+                        $stats = app(PurgeService::class)->getStats($user);
 
                         Notification::make()
                             ->info()

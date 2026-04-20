@@ -8,6 +8,7 @@ use App\Services\PurgeService;
 use Filament\Actions;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\ViewRecord;
+use Illuminate\Support\Facades\Auth;
 
 /**
  * @property Purge $record
@@ -50,7 +51,17 @@ class ViewPurge extends ViewRecord
                     // Refresh the record to get latest state
                     $this->record->refresh();
 
-                    $account = $this->record->account ?? $purgeService->getDefaultAccount();
+                    /** @var \App\Models\User $user */
+                    $user = Auth::user();
+
+                    // Block acting on a purge bound to someone else's account.
+                    if ($this->record->account && $this->record->account->user_id !== $user->id) {
+                        throw new \RuntimeException(
+                            'This purge is bound to an account you do not own.'
+                        );
+                    }
+
+                    $account = $this->record->account ?? $purgeService->getDefaultAccount($user);
 
                     if (! $account) {
                         throw new \RuntimeException(
@@ -60,7 +71,7 @@ class ViewPurge extends ViewRecord
                         );
                     }
 
-                    $success = $purgeService->processPurge($this->record);
+                    $success = $purgeService->processPurge($this->record, $user);
 
                     if ($success) {
                         Notification::make()

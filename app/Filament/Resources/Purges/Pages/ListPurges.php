@@ -4,10 +4,12 @@ namespace App\Filament\Resources\Purges\Pages;
 
 use App\Filament\Resources\Purges\PurgeResource;
 use App\Models\Purge;
+use App\Services\PurgeService;
 use Filament\Actions\Action;
 use Filament\Forms\Components\FileUpload;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\ListRecords;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
 
 class ListPurges extends ListRecords
@@ -31,6 +33,23 @@ class ListPurges extends ListRecords
                         ->helperText('Upload a CSV file with columns: post_id, posted_at, text'),
                 ])
                 ->action(function (array $data) {
+                    /** @var \App\Models\User $user */
+                    $user = Auth::user();
+
+                    // Every imported purge must be bound to the importing
+                    // user's default active account. No orphan purges.
+                    $defaultAccount = app(PurgeService::class)->getDefaultAccount($user);
+
+                    if (! $defaultAccount) {
+                        Notification::make()
+                            ->danger()
+                            ->title('No active Twitter account')
+                            ->body('Connect an active Twitter account before importing tweets.')
+                            ->send();
+
+                        return;
+                    }
+
                     $filePath = Storage::disk('local')->path($data['csv_file']);
 
                     if (! file_exists($filePath)) {
@@ -145,6 +164,7 @@ class ListPurges extends ListRecords
                                 'posted_at' => ! empty($rowDataLower['posted_at']) ? $rowDataLower['posted_at'] : null,
                                 'text' => $rowDataLower['text'] ?? null,
                                 'save' => false,
+                                'account_id' => $defaultAccount->id,
                             ]);
 
                             $imported++;
